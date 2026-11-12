@@ -401,7 +401,7 @@ impl Block {
             .iter()
             .filter_map(|c| c.committing())
             .map(|atom| atom.transaction_fee())
-            .sum()
+            .fold(0u64, u64::saturating_add)
     }
 
     pub fn proposed_by(&self) -> &RistrettoPublicKeyBytes {
@@ -1263,4 +1263,43 @@ where
     Block::delete_record(tx, block_id)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tari_consensus_types::Decision;
+    use tari_engine_types::commit_result::AbortReason;
+    use tari_ootle_common_types::NumPreshards;
+    use tari_ootle_transaction::TransactionId;
+
+    use super::*;
+    use crate::consensus_models::LocalOnlyAtom;
+
+    #[test]
+    fn calculate_total_transaction_fee_saturates_on_overflow() {
+        let mut block = Block::zero_block(Network::LocalNet, NumPreshards::P64);
+        block.commands = BlockCommands::init([
+            Command::LocalOnly(LocalOnlyAtom {
+                id: TransactionId::new([1u8; 32]),
+                decision: Decision::Commit,
+                transaction_fee: u64::MAX,
+                leader_fee: None,
+            }),
+            Command::LocalOnly(LocalOnlyAtom {
+                id: TransactionId::new([2u8; 32]),
+                decision: Decision::Commit,
+                transaction_fee: 100,
+                leader_fee: None,
+            }),
+            Command::LocalOnly(LocalOnlyAtom {
+                id: TransactionId::new([3u8; 32]),
+                decision: Decision::Abort(AbortReason::ExecutionFailure),
+                transaction_fee: 500,
+                leader_fee: None,
+            }),
+        ])
+        .unwrap();
+
+        assert_eq!(block.calculate_total_transaction_fee(), u64::MAX);
+    }
 }
